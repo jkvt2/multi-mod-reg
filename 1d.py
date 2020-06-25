@@ -23,10 +23,9 @@ def tflayersgmm(inputs, n_gauss=8, epsilon=1e-5):
     return phi, mu, sigma
 
 def gmm_loss(phi, mu, sigma, x, epsilon=1e-5):
-    prob_n = 1/(sigma + epsilon) * \
-        tf.exp(-tf.square(x - mu)/(epsilon + 2 * sigma**2))
+    logprob_n = -tf.square(x - mu)/(epsilon + 2 * sigma**2) - tf.log(sigma + epsilon)
     prob = tf.reduce_sum(
-        tf.multiply(phi, prob_n),
+        tf.multiply(phi, tf.exp(logprob_n)),
         axis=-1,
         keep_dims=True)
     return prob
@@ -98,7 +97,7 @@ def run_l2_experiment():
                 pred_y[z] += [p[0]]
     return pred_y
 
-def run_mmr_experiment():
+def run_mmr_experiment(n_gauss=8):
     tf_x = tf.placeholder(
         shape=(None, 1),
         dtype=tf.float32)
@@ -113,7 +112,7 @@ def run_mmr_experiment():
     
     phi, mu, sigma = tflayersgmm(
         inputs=d1,
-        n_gauss=8)
+        n_gauss=n_gauss)
     loss_gmm = gmm_loss(
         phi, mu, sigma, tf_y)
     loss = -tf.reduce_mean(tf.log(loss_gmm))
