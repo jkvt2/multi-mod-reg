@@ -14,7 +14,6 @@ def tflayersgmm(inputs, n_gauss=8, epsilon=1e-5):
     gmms = tf.layers.dense(
             inputs=inputs,
             units=n_gauss*3)
-    tf.reshape(gmms, (-1, n_gauss, 3))
     phi, mu, sigma = tf.split(
         value=gmms,
         axis=-1,
@@ -39,12 +38,6 @@ def gmm_prob(phi, mu, sigma, x):
     x = x[None,:]
     return np.sum(phi * (1/sigma * np.exp(-(x - mu)**2/(2 * sigma **2))), 0)
 
-def simple_mode_finder(phi, mu, sigma,):
-    lb = np.min(mu)
-    ub = np.max(mu)
-    ls = np.linspace(lb, ub)
-    return ls[np.argmax(gmm_prob(phi, mu, sigma, ls))]
-
 def make_sect_and_center(n_bins, overlap, span):
     section_length = (span[1] - span[0])/(n_bins - (n_bins - 1) * overlap)
     sections = [span[0] + i * (1 - overlap) * section_length for i in range(n_bins)]
@@ -58,8 +51,11 @@ def mmr_sampler(phi, mu, sigma,):
     idx = np.sum(np.random.rand() > np.cumsum(phi) + 1e-5)
     return np.random.normal(loc=mu[idx], scale=sigma[idx])
 
-def mb_sampler(cls_logit, reg_value, centers, top_k=3):
-    idx = np.random.choice(np.argsort(cls_logit)[:-top_k-1:-1])
+def mb_sampler(cls_probs, reg_value, centers, top_k=3):
+    sort_idx = np.argsort(cls_probs)[:-top_k-1:-1]
+    pvals = cls_probs[sort_idx]
+    pvals /= np.sum(pvals)
+    idx = sort_idx[np.random.multinomial(1, pvals).argmax()]
     return centers[idx] + reg_value[idx]
 
 def run_l2_experiment():
@@ -163,6 +159,7 @@ def run_mb_experiment(n_bins=20):
     tfsections = tf.constant(sections)
     tfcenters = tf.constant(centers)
     cls_logit = tf.layers.dense(d1, units=n_bins)
+    cls_probs = tf.nn.softmax(cls_logit)
     reg_val = tf.layers.dense(d1, units=n_bins)
     
     best_class = tf.argmin(tf.abs(tfcenters[None] - tf_y), axis=-1)
@@ -192,7 +189,7 @@ def run_mb_experiment(n_bins=20):
         pred_y = [[], []]
         for i in range(100):
             batch_x, batch_y, batch_z = make_batch(batch_size=10)
-            c, r = sess.run([cls_logit, reg_val],
+            c, r = sess.run([cls_probs, reg_val],
                           feed_dict={tf_x: batch_x[:,None],
                                     tf_y: batch_y[:,None]})
             pr = [mb_sampler(_c, _r, centers) 
@@ -202,33 +199,41 @@ def run_mb_experiment(n_bins=20):
     return pred_y
 
 if __name__ == '__main__':
+    np.random.seed(0)
+    tf.random.set_random_seed(0)
     l2_pred_y = run_l2_experiment()
-    mmr_pred_y = run_mmr_experiment()
     mb_pred_y = run_mb_experiment()
+    mmr_pred_y = run_mmr_experiment()
     
     x, y, z = make_batch(1000)
-    ax=plt.subplot(5,1,1)
-    plt.hist(x[z.astype(bool)], 30, lw=0)
-    plt.hist(x[~z.astype(bool)], 30, lw=0)
-    ax.set_title('Input')
-    ax=plt.subplot(5,1,2)
-    plt.hist(y[z.astype(bool)], 60, lw=0)
-    plt.hist(y[~z.astype(bool)], 30, lw=0)
-    ax.set_title('Ground Truth Output')
-    ax.set_xlim([-.5, 2.5])
-    ax=plt.subplot(5,1,3)
-    plt.hist(l2_pred_y[1], 60, lw=0)
-    plt.hist(l2_pred_y[0], 30, lw=0)
-    ax.set_title('Pred (trained w l2)')
-    ax.set_xlim([-.5, 2.5])
-    ax=plt.subplot(5,1,4)
-    plt.hist(mmr_pred_y[1], 60, lw=0)
-    plt.hist(mmr_pred_y[0], 30, lw=0)
-    ax.set_title('(Sampled) Pred (trained w mmr)')
-    ax.set_xlim([-.5, 2.5])
-    ax=plt.subplot(5,1,5)
-    plt.hist(mb_pred_y[1], 60, lw=0)
-    plt.hist(mb_pred_y[0], 30, lw=0)
-    ax.set_title('(Sampled) Pred (trained w multibin)')
-    ax.set_xlim([-.5, 2.5])
-    plt.tight_layout()
+    
+    plt.figure()
+    plt.hist(x[z.astype(bool)], np.linspace(-2, 2, 40), lw=0)
+    plt.hist(x[~z.astype(bool)], np.linspace(-2, 2, 40), lw=0)
+    plt.title('Price')
+    
+    vis_range = (-.5, 2.5)
+    bins = np.linspace(*vis_range, 30)
+    plt.figure()
+    plt.hist(y[z.astype(bool)], bins, lw=0)
+    plt.hist(y[~z.astype(bool)], bins, lw=0)
+    plt.title('Height')
+    plt.xlim(vis_range)
+    
+    plt.figure()
+    plt.hist(l2_pred_y[1], bins, lw=0)
+    plt.hist(l2_pred_y[0], bins, lw=0)
+    plt.title('Height')
+    plt.xlim(vis_range)
+    
+    plt.figure()
+    plt.hist(mb_pred_y[1], bins, lw=0)
+    plt.hist(mb_pred_y[0], bins, lw=0)
+    plt.title('Height')
+    plt.xlim(vis_range)
+    
+    plt.figure()
+    plt.hist(mmr_pred_y[1], bins, lw=0)
+    plt.hist(mmr_pred_y[0], bins, lw=0)
+    plt.title('Height')
+    plt.xlim(vis_range)
