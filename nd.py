@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from sklearn.mixture import GaussianMixture
+import tensorflow_probability as tfp
+tfd = tfp.distributions
+tfb = tfp.bijectors
 
 def make_batch(ndims, batch_size=32):
     z1 = np.random.randint(2, size=batch_size)
@@ -396,16 +399,103 @@ def run_gmm_clsfy_experiment(batch_fn, ndims, n_gauss=3, train_steps=1000):
         pred_y[k] = np.stack(v, -1)
     return pred_y
 
+class RealNVP(tf.keras.Model):
+    def __init__(self, ndims, **kwargs):
+        super(RealNVP, self).__init__(**kwargs)
+        self.dense_h = tf.keras.layers.Dense(units=32,
+                                        activation=tf.keras.activations.relu,
+                                        name='mainlevel/dense')
+        self.d_mean = tf.keras.layers.Dense(units=ndims)
+        self.d_logstd = tf.keras.layers.Dense(units=ndims)
+
+        self.expose = []
+
+        bijectors = []
+        for i in range(5):
+            x = tfp.bijectors.real_nvp_default_template(hidden_layers=[16,])
+            self.expose.append(x)
+            bijectors.append(
+                tfb.RealNVP(num_masked=ndims//2,
+                            shift_and_log_scale_fn=x))
+            bijectors.append(tfb.Permute(permutation=list(range(ndims//2, ndims)) + \
+                                                     list(range(ndims//2))))
+
+        bijector = tfb.Chain(bijectors[::-1])
+
+        self.flow = lambda x:tfd.TransformedDistribution(
+            distribution=tfd.MultivariateNormalDiag(loc=x[0], scale_diag=x[1]),
+            bijector=bijector)
+        
+    def build_flow(self, inputs):
+        y = self.dense_h(inputs)
+        y_mean = self.d_mean(y)
+        y_std = tf.exp(self.d_logstd(y))
+        flow = self.flow((y_mean, y_std))
+        return flow
+    
+    def call(self, inputs):
+        flow = self.build_flow(inputs)
+        return flow.bijector.forward(flow.distribution.sample())
+
+    @tf.function
+    def train_step(self, data):
+        with tf.GradientTape() as tape:
+            x, y = data
+            loss = self.loss(y, self.build_flow(x))
+            gradients = tape.gradient(loss, self.trainable_variables)
+            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        return {'loss': loss}
+
+def run_nf_experiment(batch_fn, ndims, train_steps=1000):
+    model = RealNVP(ndims)
+    
+    xs, ys, zs = batch_fn(ndims, 1000)
+    
+    ds = tf.data.Dataset.from_tensor_slices((xs[:,None].astype(np.float32), ys.astype(np.float32)))
+    ds = ds.repeat()
+    ds = ds.shuffle(buffer_size=1000)
+    ds = ds.prefetch(32 * 3)
+    ds = ds.batch(32)
+    
+    x_test, y_test, z_test = batch_fn(ndims, 1000)
+    
+    model(np.random.normal(size=(1,1)))
+    
+    flow = model.build_flow(xs[0,None,None])
+    flow.prob([0.0,] * ndims)
+    
+    model.summary()
+    
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+    loss = lambda x, rv: -tf.reduce_sum(rv.log_prob(x))
+    
+    model.compile(optimizer=optimizer, loss=loss)
+    model.fit(ds, steps_per_epoch=train_steps, epochs=1)
+    
+    flow = model.build_flow(x_test[:,None].astype(np.float32))
+    y_hat = flow.sample().numpy()
+    
+    pred_y = {}
+    for p, z in zip(y_hat, z_test):
+        if z in pred_y:
+            pred_y[z] += [p]
+        else:
+            pred_y[z] = [p]
+    for k,v in pred_y.items():
+        pred_y[k] = np.stack(v, -1)
+    return pred_y
+
 if __name__ == '__main__':
     ndims = 2
     np.random.seed(0)
-    tf.random.set_random_seed(0)
+    tf.random.set_seed(0)
     l2_pred_y = run_l2_experiment(make_batch, ndims)
     mmr_pred_y = run_mmr_experiment(make_batch, ndims)
     mb_pred_y_ind = run_mb_ind_experiment(make_batch, ndims)
     mb_pred_y_joint = run_mb_joint_experiment(make_batch, ndims)
     gmm_clsfy_y = run_gmm_clsfy_experiment(make_batch, ndims)
-    
+    nf_y = run_nf_experiment(make_batch, ndims)
+
     x, y, z = make_batch(ndims, batch_size=1000)   
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
@@ -436,3 +526,8 @@ if __name__ == '__main__':
     ax = fig.add_subplot(111, projection='3d')
     plot3d(ax, *gmm_clsfy_y[1][:2], vis_bins=30)
     plot3d(ax, *gmm_clsfy_y[0][:2], vis_bins=30)
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    plot3d(ax, *nf_y[1][:2], vis_bins=30)
+    plot3d(ax, *nf_y[0][:2], vis_bins=30)

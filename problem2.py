@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from nd import run_mmr_experiment, run_gmm_clsfy_experiment, plot3d
+from nd import run_mmr_experiment, run_gmm_clsfy_experiment, run_nf_experiment, plot3d
 
 def make_batch(ndims, batch_size=32):
     z1 = np.random.randint(1, 10, size=batch_size)
@@ -18,9 +18,10 @@ def make_batch(ndims, batch_size=32):
 if __name__ == '__main__':
     ndims = 2
     np.random.seed(0)
-    tf.random.set_random_seed(0)
+    tf.random.set_seed(0)
     mmr_pred_y = run_mmr_experiment(make_batch, ndims)
     gmm_clsfy_y = run_gmm_clsfy_experiment(make_batch, ndims, n_gauss=4)
+    nf_y = run_nf_experiment(make_batch, ndims)
     
     x, y, z = make_batch(ndims, batch_size=1000)   
     fig = plt.figure()
@@ -40,3 +41,9 @@ if __name__ == '__main__':
     plot3d(ax, *gmm_clsfy_y[1][:2], vis_bins=31)
     plot3d(ax, *gmm_clsfy_y[0][:2], vis_bins=31)
     plot3d(ax, *gmm_clsfy_y[2][:2], vis_bins=31)
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    plot3d(ax, *nf_y[1][:2], vis_bins=31)
+    plot3d(ax, *nf_y[0][:2], vis_bins=31)
+    plot3d(ax, *nf_y[2][:2], vis_bins=31)
