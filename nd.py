@@ -494,7 +494,7 @@ if __name__ == '__main__':
     mb_pred_y_ind = run_mb_ind_experiment(make_batch, ndims)
     mb_pred_y_joint = run_mb_joint_experiment(make_batch, ndims)
     gmm_clsfy_y = run_gmm_clsfy_experiment(make_batch, ndims)
-    nf_y = run_nf_experiment(make_batch, ndims)
+    nf_y = run_nf_experiment(make_batch, ndims, train_steps=10000)
 
     x, y, z = make_batch(ndims, batch_size=1000)   
     fig = plt.figure()
